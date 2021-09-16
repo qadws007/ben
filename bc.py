@@ -169,11 +169,23 @@ cerebro = bt.Cerebro()
 # 添加策略
 cerebro.addstrategy(TestStrategy)
 
-# 获取股票池数据
+
 
 # 获取根目录
 path_root = os.getcwd()
+def check_file_path(path):
+    if not os.path.exists(path):
+      os.makedirs(path)
 
+#沪深300成分股
+def update_stock_list(code="000300"):
+    df_stk_list = ak.index_stock_cons(index="000300")
+    check_file_path(path_root+"\datas")
+    df_stk_list.to_csv(path_root +"\datas\\"+code+'_list.csv',encoding='utf8',index =False)
+update_stock_list()
+
+
+# 获取股票池数据
 df_names=pandas.read_csv(path_root + r"\datas\000300_list.csv",dtype={'品种代码':str},encoding='utf8')
 df_names.drop(columns=['品种名称','纳入日期'],inplace=True)
 df_names=df_names[~df_names['品种代码'].str.startswith('688')]
