@@ -13,9 +13,9 @@ import os
 import sys
 
 bs.login()
-pd.set_option('max_columns', 1000)
-pd.set_option('max_row', 300)
-pd.set_option('display.float_format', lambda x: '%.5f' % x)
+# pd.set_option('max_columns', 1000)
+# pd.set_option('max_row', 300)
+# pd.set_option('display.float_format', lambda x: '%.5f' % x)
 path_root = os.getcwd()
 print(path_root)
 if not os.path.exists(path_root + "\datas"):
@@ -159,6 +159,8 @@ now = datetime.datetime.now()
 len_df = len(df['code']) - 1
 # 打乱顺序
 df.sample(frac=1).reset_index(drop=True)
+
+#df=df.loc[df['code']=='000002']
 for n, i in enumerate(df['code'].iloc[::-1]):
     code_date = selcet_last_data(i)
 
@@ -173,7 +175,7 @@ for n, i in enumerate(df['code'].iloc[::-1]):
     try:
         # 保存数据库
         dd = ak.stock_zh_a_daily(symbol=s, start_date=code_date[0], end_date=code_date[1], adjust="qfq")
-        # break
+        #print(dd)
         if dd.empty:
             print(i, code_date, '进行了', n, '/', len_df, '项', '无需更新，跳过！ 已用时', datetime.datetime.now() - now)
             pass
@@ -202,17 +204,19 @@ for n, i in enumerate(df['code'].iloc[::-1]):
         last2 = last2.sort_values(by='date')
         last2['openinterset'] = last2['close'].pct_change()
 
+        #去除财务数据的ipo之前的值
+        last2=last2.loc[last2['date']>dd['date'].min()]
+
         # （1）        
         # 保存为csv格式
         # last2.to_csv(str(os.getcwd())+'\data\\'+s+'.csv')
 
         # （2）        
         # 存入数据库
-
         last2 = last2.rename(columns=lambda x: x.replace("(", "").replace(')', ''))
         last2.to_sql(name=i, con=engine, index=False, if_exists='replace')
         last2['code']=i
-        last2.to_sql(name="datas_daily_all", con=engine, index=False, if_exists='fail')
+        last2.to_sql(name="datas_daily_all", con=engine, index=False, if_exists='replace')
 
         print(i, code_date, '进行了', n, '/', len_df, '项', '已用时', datetime.datetime.now() - now)
 
@@ -221,7 +225,6 @@ for n, i in enumerate(df['code'].iloc[::-1]):
         print(i, "Error '%s' happened on line %d" % (s[1], s[2].tb_lineno))
         # print(traceback.print_exc())
         continue
-
 
 
 conn.close()

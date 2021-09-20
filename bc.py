@@ -30,7 +30,7 @@ def get_data(code='sz000001', start_date='2021-01-01', end_date='',what='*' ,whe
         # 数据获取函数
         engine = create_engine("mysql://{}:{}@{}/{}?charset=utf8".format('root', 'root', '192.168.1.3:3306', 'stock_datas_factor'))
         sql_query = "select {} from `{}` where date>= '{}' and  date<= '{}' {}".format(what,code, start_date, end_date,where)
-        print(sql_query)
+        #print(sql_query)
         data = pd.read_sql(sql_query, engine)
     except:
         print('sql查询有误',sql_query)
@@ -79,17 +79,46 @@ class TestStrategy(bt.Strategy):
             self.inds[d]['ma2'] = bt.indicators.SimpleMovingAverage(d.close, period=self.params.maperiod2)
             #self.inds[d]['ma3'] = bt.indicators.SimpleMovingAverage(d.close, period=self.params.maperiod3)
 
-            self.inds[d]['A1'] = bt.ind.CrossOver(self.inds[d]['ma1'], self.inds[d]['ma2'])  # 交叉信号
+            self.inds[d]['w1'] = bt.ind.CrossOver(self.inds[d]['ma1'], self.inds[d]['ma2'])  # 交叉信号
             # 跳过第一只股票data，第一只股票data作为主图数据
+            # if i >= 0:
+            #     if self.p.poneplot:
+            #         d.plotinfo.plotmaster = self.datas[0]
 
-            if i >= 0:
-                if self.p.poneplot:
-                    d.plotinfo.plotmaster = self.datas[0]
 
     def notify_trade(self, trade):
         if not trade.isclosed:
             return
         # self.log('OPERATION PROFIT,GROSS %.2F,NET %.2F' %(trade.pnl,trade.pnlcomm))
+
+    def notify_order(self, order):
+        if order.status in [order.Submitted, order.Accepted]:
+            # broker 提交/接受了，买/卖订单则什么都不做
+            return
+
+        # 检查一个订单是否完成
+        # 注意: 当资金不足时，broker会拒绝订单
+        if order.status in [order.Completed]:
+            if order.isbuy():
+                str = '股票:%s, 已买入:%.2f, 数量:%.2f, 价值:%.2f, 手续费:%.2f' % (
+                    order.data._name, order.executed.price, order.executed.size, order.executed.value,
+                    order.executed.comm)
+                self.log(str)
+
+            elif order.issell():
+                str = '股票:%s, 已卖出:%.2f, 数量:%.2f, 价值:%.2f, 手续费:%.2f' % (
+                    order.data._name, order.executed.price, order.executed.size, order.executed.value,
+                    order.executed.comm)
+                self.log(str)
+            # 记录当前交易数量
+            self.bar_executed = len(self)
+
+        elif order.status in [order.Canceled, order.Margin, order.Rejected]:
+            str = "\nsize:%f\nvalue:%f\ncash:%f" % (order.executed.size, order.executed.value, order.executed.value)
+            # self.log('订单取消/保证金不足/拒绝'+str)
+
+        # 其他状态记录为：无挂起订单
+        self.order = None
 
     def prenext(self):
         self.next()
@@ -121,23 +150,21 @@ class TestStrategy(bt.Strategy):
             # print(dt)
             pos = self.getposition(d).size
 
-            sig3 = (self.inds[d]['A1'][0] > 0)
-
+            #print('validday', validday)
             # print('sig1',sig1)
             if not pos:  # 不在场内，则可以买入  vol成交量， ref日前
-                if self.inds[d]['A1'][0] > 0:  # 如果金叉
-                    # if sig2:
-                    #                     print(d.close[0])
-                    #                     print(d.close[1])
-                    #                     print(d.close)
-                    self.buy(data=d, size=self.p.pstake)  # 买
+                if self.inds[d]['w1'][0]==1 and d.close[0]<d.close[-1]*1.1-0.02:  # 如果金叉
+                    #self.buy(data=d,size=cerebro.broker.getcash()/5)  # 买
+                    self.order_target_value(data=d,target=cerebro.broker.getcash()/5,price=d.close)
                     self.log('%s,BUY CREATE, %.2f ,%s' % (dt, d.close[0], d._name))
                     # self.order = self.buy()
-            else:  # 在场内。且死叉
-                if self.inds[d]['A1'][0] <0:
+            elif self.inds[d]['w1'][0]==-1 and d.close[0]>d.close[-1]*0.9+0.02:
                     self.close(data=d)  # 卖
                     self.log('%s,SELL CREATE,%.2f,%s' % (dt, d.close[0], d._name))
-                    # self.order = self.sell()
+            elif self.inds[d]['ma1'][0]<self.inds[d]['ma2'][0] and d.close[0]>d.close[-1]*0.9+0.02:
+                self.close(data=d)  # 卖
+                self.log('%s,SELL CREATE,%.2f,%s' % (dt, d.close[0], d._name))
+
 
 
 # 印花税
@@ -189,49 +216,47 @@ update_stock_list()
 df_names=pandas.read_csv(path_root + r"\datas\000300_list.csv",dtype={'品种代码':str},encoding='utf8')
 df_names.drop(columns=['品种名称','纳入日期'],inplace=True)
 df_names=df_names[~df_names['品种代码'].str.startswith('688')]
+#df_names=df_names[0:10]
 
 for i, fname in zip(df_names.index,df_names['品种代码']):
-    df=get_data(fname,what="date,close")
-    print(df)
-    exit()
+    df = get_data(fname, what="date,open,high,low,close,volume")
     if df.empty:
         continue
-    try:
-        if len(df) < 61:
-            continue
-        else:
-            # 转换某些股票含时区，再选取时间区间，然后再判断行高。
-            #df['date'] = df['date'].dt.tz_localize(None)
-            # if df.iloc[0:22,1].sum==None:
-            #     df.iloc[0]=df.loc[df['open']!=None].ilco[0]
-            #     print("此条开头全是空")
-            try:
-                # df.date = pd.to_datetime(df.date)
-                data = btfeeds.PandasData(
-                    dataname=df,
-                    fromdate=datetime(2020, 1, 1),
-                    todate=datetime(2021, 12, 31),
-                    datetime=0,
-                    open=-1,
-                    high=-1,
-                    low=-1,
-                    close=1,
-                    volume=-1,
-                    openinterest=-1,
-                )
-                cerebro.adddata(data, name=fname)
-                if i == 300:
-                    print("注入了", i, "个数据")
-            except:
-                continue
-    except:
+    if len(df) < 55:
         continue
+    # 转换某些股票含时区，再选取时间区间，然后再判断行高。
+    #df['date'] = df['date'].dt.tz_localize(None)
+    # if df.iloc[0:22,1].sum==None:
+    #     df.iloc[0]=df.loc[df['open']!=None].ilco[0]
+    #     print("此条开头全是空")
+    try:
+        # df.date = pd.to_datetime(df.date)
+        data = btfeeds.PandasData(
+        dataname=df,
+        fromdate = datetime(2020, 1, 1),
+        todate = datetime(2021, 12, 31),
+        datetime = 0,
+        open = 1,
+        high = 2,
+        low = 3,
+        close = 4,
+        volume = 5,
+        openinterest = -1,
+        )
+
+        cerebro.adddata(data, name=fname)
+        print("注入了", i, "个数据")
+    except:
+        print( i,"注入数据失败！")
+        #print(df)
+        continue
+
 
 # 设置启动资金
 cerebro.broker.setcash((i + 1) * 10000)
 # 设置交易单位大小
-# cerebro.addsizer(bt.sizers.FixedSize,stake = 100)
-cerebro.addsizer(bt.sizers.AllInSizerInt, percents=1 / (i + 2))
+cerebro.addsizer(bt.sizers.FixedSize,stake = 100)
+#cerebro.addsizer(bt.sizers.AllInSizerInt, percents=1 / (i + 2))
 # 设置佣金为千分之一
 comminfo = stampDutyCommissionScheme(stamp_duty=0.001, commission=0.0002)
 cerebro.broker.addcommissioninfo(comminfo)
@@ -247,7 +272,7 @@ cerebro.addanalyzer(bt.analyzers.PyFolio, _name='pyfolio')
 # back  = cerebro.run(maxcpus=12,exactbars=True,stdstats=False)
 
 back = cerebro.run()
-print(back)
+#print(back)
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -258,7 +283,8 @@ returns.index = returns.index.tz_convert(None)
 
 import quantstats
 
-quantstats.reports.html(returns, output='stats.html', title='Stock Sentiment')
+quantstats.reports.html(returns, output='stats.html', title='Stock Sentiment',rf=0)
+
 
 import webbrowser
 
